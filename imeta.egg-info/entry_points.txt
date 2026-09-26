@@ -1,0 +1,2 @@
+[console_scripts]
+imeta = imeta.cli.main:main

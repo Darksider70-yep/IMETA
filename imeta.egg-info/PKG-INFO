@@ -1,0 +1,146 @@
+Metadata-Version: 2.4
+Name: imeta
+Version: 1.0.0
+Summary: Deterministic, lossless image serialization system with a custom binary container format (.imeta)
+Author: Daksh Gehlot
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.110.0
+Requires-Dist: uvicorn>=0.28.0
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: python-multipart>=0.0.9
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: httpx>=0.25.0; extra == "dev"
+Requires-Dist: pillow>=10.0.0; extra == "dev"
+
+# IMETA: Deterministic, Lossless Image Serialization System
+
+**IMETA** is a high-performance binary container format (`.imeta`) and serialization engine engineered for lossless image storage, metadata preservation, and bit-level integrity verification.
+
+---
+
+## Core Invariant & Guarantee
+For any supported image (JPEG, PNG, WebP):
+$$\text{SHA-256}(\text{original}) == \text{SHA-256}(\text{reconstructed})$$
+
+IMETA **never** decodes and re-encodes image pixels. It preserves and reconstructs the exact original bitstream with zero generational loss.
+
+---
+
+## Key Features
+- **Deterministic Binary Container (v1.0):** Sequential, gapless binary layout with authoritative seek offsets.
+- **Fast-path Metadata Access:** Extracted EXIF, XMP, IPTC, dimensions, and color space embedded as uncompressed UTF-8 JSON.
+- **Cryptographic Verification:** Pre-compression SHA-256 integrity block verifying payload authenticity.
+- **Modular Compression Pipeline:** Full uncompressed passthrough with DEFLATE support and decompression bomb protection.
+- **Security-First Architecture:** Magic-byte format detection (never trusts extensions or MIME types), strict bounds validation, and safe temp-file handling.
+- **Dual Interfaces:** Rich CLI (`imeta encode|decode|inspect|verify`) and RESTful FastAPI service (`/encode`, `/decode`, `/inspect`, `/verify`).
+
+---
+
+## IMETA v1.0 Binary Layout
+
+```
++-------------------------------------------------------------+
+| File Header (32 bytes)                                      |
+|   magic: "IMTA" | version: 1.0 | flags | offsets            |
++-------------------------------------------------------------+
+| Metadata Header (16 bytes) at metadata_offset               |
+|   magic: "META" | type: JSON | metadata_length              |
+| UTF-8 JSON Payload (metadata_length bytes)                  |
++-------------------------------------------------------------+
+| Payload Header (24 bytes) at payload_offset                 |
+|   magic: "DATA" | format_id | compression_id | sizes        |
+| Image Payload (stored_payload_size bytes)                   |
++-------------------------------------------------------------+
+| Integrity Block (40 bytes) at integrity_offset              |
+|   magic: "HASH" | algo: SHA-256 | scope: original | digest  |
++-------------------------------------------------------------+
+```
+
+See [IMETA_SPEC.md](specification/IMETA_SPEC.md) for the complete, formal format specification.
+
+---
+
+## Installation & Setup
+
+```bash
+# Clone and install in editable mode
+pip install -e .
+
+# Or install dependencies
+pip install fastapi uvicorn pydantic python-multipart pytest httpx pillow
+```
+
+---
+
+## Command-Line Interface (CLI)
+
+```bash
+# 1. Encode an image into an .imeta container
+python -m imeta.cli.main encode photo.jpg -o photo.imeta
+
+# 2. Encode with DEFLATE compression
+python -m imeta.cli.main encode photo.png -o photo_compressed.imeta --compression deflate
+
+# 3. Verify structural and cryptographic integrity
+python -m imeta.cli.main verify photo.imeta
+
+# 4. Inspect container or raw image metadata
+python -m imeta.cli.main inspect photo.imeta --json
+
+# 5. Decode container back to original image
+python -m imeta.cli.main decode photo.imeta -o photo_reconstructed.jpg
+```
+
+---
+
+## Python SDK Usage
+
+```python
+from pathlib import Path
+from imeta import (
+    serialize_imeta,
+    deserialize_imeta,
+    encode_file,
+    decode_file,
+    validate_container,
+    CompressionID,
+)
+
+# Encode to container
+original_bytes = Path("input.png").read_bytes()
+imeta_bytes = serialize_imeta(original_bytes, compression=CompressionID.NONE)
+
+# Decode from container
+container = deserialize_imeta(imeta_bytes, verify_integrity=True)
+assert original_bytes == container.image_bytes
+print(f"Dimensions: {container.metadata['width']}x{container.metadata['height']}")
+print(f"Verified SHA-256: {container.sha256}")
+```
+
+---
+
+## REST API Server
+
+Start the API server:
+```bash
+uvicorn imeta.api.server:app --host 127.0.0.1 --port 8000
+```
+
+### Endpoints:
+- `POST /encode` — Upload image (`multipart/form-data`) $\rightarrow$ Download `.imeta` binary container.
+- `POST /decode` — Upload `.imeta` container $\rightarrow$ Download exact reconstructed original image.
+- `POST /verify` — Upload `.imeta` container $\rightarrow$ Receive JSON validation and checksum report.
+- `POST /inspect` — Upload image or `.imeta` $\rightarrow$ Receive JSON format & metadata report.
+- `GET /inspect?path=...` — Inspect a file stored on the server.
+- `GET /health` — Service health check.
+
+---
+
+## Running Tests
+
+Run the full automated test suite:
+```bash
+python -m pytest -v
+```

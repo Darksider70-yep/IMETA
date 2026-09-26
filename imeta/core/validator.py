@@ -114,11 +114,11 @@ def validate_container(
 
     # Validate offsets sanity
     if meta_off < FILE_HEADER_SIZE or meta_off >= total_len:
-        errors.append(f"Invalid metadata_offset {meta_off} (file length {total_len})")
+        errors.append(f"File truncated or invalid metadata_offset {meta_off} (file length {total_len})")
     if payload_off < meta_off + META_HEADER_SIZE or payload_off >= total_len:
-        errors.append(f"Invalid payload_offset {payload_off}")
+        errors.append(f"File truncated or invalid payload_offset {payload_off} (file length {total_len})")
     if integrity_off < payload_off + DATA_HEADER_SIZE or integrity_off + INTEGRITY_BLOCK_SIZE > total_len:
-        errors.append(f"Invalid integrity_offset {integrity_off} (file length {total_len})")
+        errors.append(f"File truncated or invalid integrity_offset {integrity_off} (file length {total_len})")
 
     if errors:
         return ValidationReport(
