@@ -29,6 +29,7 @@ from imeta.core.parser import parse_image_bytes
 from imeta.core.serializer import serialize_imeta
 from imeta.core.validator import validate_container
 from imeta.api.models import InspectResponse, VerifyResponse
+from imeta.sanitize import get_sanitizer
 
 # Configurable inspect base directory (defaulting to /var/imeta/inspectable)
 INSPECT_BASE_DIR = Path(os.environ.get("IMETA_INSPECT_DIR", "/var/imeta/inspectable")).resolve()
@@ -153,6 +154,96 @@ async def decode_imeta(
         content=container.image_bytes,
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
+    )
+
+
+@app.post("/sanitize", response_class=Response)
+async def sanitize_image(
+    file: UploadFile = File(..., description="Image or .imeta file to sanitize"),
+    remove_exif: bool = Form(False, description="Remove all EXIF metadata"),
+    remove_gps_only: bool = Form(False, description="Remove GPS tags only, preserving other EXIF"),
+    remove_xmp: bool = Form(False, description="Remove XMP metadata"),
+    remove_iptc: bool = Form(False, description="Remove IPTC metadata"),
+):
+    """Export a sanitized copy of an image with selected metadata removed."""
+    data = await _read_upload_file(file)
+
+    if remove_exif and remove_gps_only:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Choose either 'remove all EXIF' or 'GPS only', not both.",
+        )
+
+    if not (remove_exif or remove_gps_only or remove_xmp or remove_iptc):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select at least one thing to remove.",
+        )
+
+    # Detect container vs raw image
+    if data.startswith(b"IMTA"):
+        try:
+            container = deserialize_imeta(data, verify_integrity=True)
+            image_bytes = container.image_bytes
+            format_id = container.format_id
+            ext = container.metadata.get("extension") or FORMAT_EXTENSIONS.get(format_id, ".bin")
+        except (IntegrityError, CorruptedFileError, IMETAError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Container failed integrity verification: {e}",
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to process container: {e}",
+            )
+    else:
+        try:
+            parse_result = parse_image_bytes(data)
+            image_bytes = data
+            format_id = parse_result.format_id
+            ext = parse_result.extension
+        except UnsupportedFormatError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot inspect image: {e}")
+
+    try:
+        sanitizer = get_sanitizer(format_id)
+        result = sanitizer.sanitize(
+            image_bytes,
+            remove_exif=remove_exif,
+            remove_gps_only=remove_gps_only,
+            remove_xmp=remove_xmp,
+            remove_iptc=remove_iptc,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Sanitization failed: {e}",
+        )
+
+    stem = Path(file.filename or "image").stem
+    if stem.endswith(".imeta"):
+        stem = stem[:-6]
+    download_filename = f"{stem}_sanitized{ext}"
+
+    media_types = {
+        FormatID.JPEG: "image/jpeg",
+        FormatID.PNG: "image/png",
+        FormatID.WEBP: "image/webp",
+    }
+    media_type = media_types.get(format_id, "application/octet-stream")
+
+    return Response(
+        content=result.image_bytes,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_filename}"',
+            "X-IMETA-Removed": ",".join(result.removed),
+            "X-IMETA-GPS-Downgraded": "true" if result.gps_only_downgraded else "false",
+            "X-IMETA-New-SHA256": result.new_sha256,
+        },
     )
 
 
