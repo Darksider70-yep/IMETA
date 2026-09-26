@@ -63,3 +63,42 @@ def test_api_verify_corrupted_container():
     report = res.json()
     assert report["is_valid"] is False
     assert report["status"] == "CORRUPTED"
+
+
+def test_inspect_get_rejects_path_traversal():
+    """GET /inspect rejects relative path traversal escaping the base dir."""
+    res = client.get("/inspect", params={"path": "../../../../etc/passwd"})
+    assert res.status_code != 200
+    assert res.status_code in (403, 404)
+
+
+def test_inspect_get_rejects_absolute_path_escape():
+    """GET /inspect rejects absolute path escapes."""
+    res = client.get("/inspect", params={"path": "/etc/passwd"})
+    assert res.status_code != 200
+    assert res.status_code in (403, 404)
+
+
+def test_inspect_get_allows_file_inside_base_dir(monkeypatch, tmp_path, sample_png_bytes):
+    """GET /inspect succeeds when reading a valid file inside the sandboxed base dir."""
+    # Point INSPECT_BASE_DIR at tmp_path
+    monkeypatch.setattr("imeta.api.server.INSPECT_BASE_DIR", tmp_path.resolve())
+
+    test_image = tmp_path / "valid_image.png"
+    test_image.write_bytes(sample_png_bytes)
+
+    res = client.get("/inspect", params={"path": "valid_image.png"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["format_name"] == "PNG"
+    assert data["metadata"]["width"] == 64
+    assert data["metadata"]["height"] == 48
+
+
+def test_cors_rejects_unlisted_origin():
+    """Unlisted origins must not receive Access-Control-Allow-Origin headers."""
+    res = client.get("/health", headers={"Origin": "https://unauthorized-domain.com"})
+    assert res.status_code == 200
+    assert res.headers.get("access-control-allow-origin") != "https://unauthorized-domain.com"
+    assert res.headers.get("access-control-allow-origin") != "*"
+

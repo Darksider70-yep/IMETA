@@ -1,6 +1,6 @@
 """FastAPI server for IMETA image serialization and verification."""
 
-import io
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +30,12 @@ from imeta.core.serializer import serialize_imeta
 from imeta.core.validator import validate_container
 from imeta.api.models import InspectResponse, VerifyResponse
 
+# Configurable inspect base directory (defaulting to /var/imeta/inspectable)
+INSPECT_BASE_DIR = Path(os.environ.get("IMETA_INSPECT_DIR", "/var/imeta/inspectable")).resolve()
+
+# Configurable CORS allowed origins (defaulting to empty allowlist)
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("IMETA_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
 app = FastAPI(
     title="IMETA API",
     description="Deterministic, lossless image serialization system (.imeta)",
@@ -38,9 +44,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -154,15 +160,21 @@ async def inspect_file_post(
 
 @app.get("/inspect", response_model=InspectResponse)
 def inspect_file_get(
-    path: str = Query(..., description="Server path to file to inspect")
+    path: str = Query(..., description="Path relative to the configured inspect directory")
 ):
-    """Inspect metadata from a file on the server filesystem."""
-    file_path = Path(path)
-    if not file_path.is_file():
+    """Inspect metadata from a file in the configured inspect directory."""
+    candidate = (INSPECT_BASE_DIR / path).resolve()
+    if not candidate.is_relative_to(INSPECT_BASE_DIR):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Path escapes the allowed directory",
+        )
+
+    if not candidate.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {path}")
 
     try:
-        data = file_path.read_bytes()
+        data = candidate.read_bytes()
         return _inspect_data(data)
     except IMETAError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
