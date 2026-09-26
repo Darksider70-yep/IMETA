@@ -1,0 +1,1084 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IMETA — Lossless Image Serialization</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #12181C;
+      --panel: #1A2126;
+      --block: #232C32;
+      --paper: #E8E3D3;
+      --muted: #8B9490;
+      --hairline: #3A4A47;
+      --verdigris: #4F9E82;
+      --rust: #C15C42;
+      --amber: #C99A4E;
+      --focus-ring: 2px solid #4F9E82;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --ink: #12181C;
+        --panel: #1A2126;
+        --block: #232C32;
+        --paper: #E8E3D3;
+        --muted: #8B9490;
+        --hairline: #3A4A47;
+        --verdigris: #4F9E82;
+        --rust: #C15C42;
+        --amber: #C99A4E;
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --ink: #12181C;
+      --panel: #1A2126;
+      --block: #232C32;
+      --paper: #E8E3D3;
+      --muted: #8B9490;
+      --hairline: #3A4A47;
+      --verdigris: #4F9E82;
+      --rust: #C15C42;
+      --amber: #C99A4E;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--ink);
+      color: var(--paper);
+      font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      padding: 48px 20px 80px 20px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    /* Typography helpers */
+    .mono {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.9em;
+    }
+
+    header {
+      margin-bottom: 40px;
+    }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      color: var(--paper);
+      letter-spacing: -0.01em;
+      margin-bottom: 8px;
+    }
+
+    .tagline {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* Section Label */
+    .section-label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 12px;
+      font-weight: 400;
+    }
+
+    /* Container Map */
+    .map-container {
+      margin-bottom: 36px;
+    }
+
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .map-block {
+      background-color: var(--block);
+      border: 1px solid var(--hairline);
+      border-left-width: 3px;
+      border-radius: 2px;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 40px;
+      transition: height 250ms ease-out, background-color 250ms ease-out;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .map-block {
+        transition: none;
+      }
+    }
+
+    .map-block.fixed {
+      border-left-color: var(--verdigris);
+    }
+
+    .map-block.variable {
+      border-left-color: var(--amber);
+    }
+
+    .block-name {
+      font-size: 14px;
+      color: var(--paper);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .block-magic {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .block-size {
+      color: var(--paper);
+      font-size: 13px;
+      text-align: right;
+    }
+
+    /* Drop Area */
+    .drop-area-wrapper {
+      margin-bottom: 16px;
+    }
+
+    .drop-zone {
+      display: block;
+      border: 1px solid var(--hairline);
+      background-color: var(--panel);
+      padding: 32px 24px;
+      text-align: left;
+      cursor: pointer;
+      border-radius: 2px;
+      transition: border-color 150ms ease, background-color 150ms ease;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragover {
+      border-color: var(--verdigris);
+      background-color: rgba(79, 158, 130, 0.04);
+    }
+
+    .drop-zone:focus-within {
+      outline: var(--focus-ring);
+      outline-offset: 2px;
+    }
+
+    .drop-prompt {
+      font-size: 15px;
+      color: var(--paper);
+      margin-bottom: 4px;
+    }
+
+    .drop-subtext {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* Settings Affordance */
+    .settings-bar {
+      margin-bottom: 36px;
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-link {
+      background: none;
+      border: none;
+      color: var(--muted);
+      text-decoration: underline;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: inherit;
+      padding: 0;
+    }
+
+    .btn-link:hover {
+      color: var(--paper);
+    }
+
+    .btn-link:focus-visible {
+      outline: var(--focus-ring);
+    }
+
+    .settings-form {
+      display: none;
+      width: 100%;
+      margin-top: 8px;
+      gap: 8px;
+    }
+
+    .settings-form.open {
+      display: flex;
+    }
+
+    .text-input {
+      background-color: var(--panel);
+      border: 1px solid var(--hairline);
+      color: var(--paper);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 2px;
+      flex: 1;
+    }
+
+    .text-input:focus {
+      outline: var(--focus-ring);
+      border-color: var(--verdigris);
+    }
+
+    .btn-sm {
+      background-color: var(--block);
+      border: 1px solid var(--hairline);
+      color: var(--paper);
+      font-family: "IBM Plex Sans", sans-serif;
+      font-size: 13px;
+      padding: 6px 12px;
+      cursor: pointer;
+      border-radius: 2px;
+    }
+
+    .btn-sm:hover {
+      border-color: var(--paper);
+    }
+
+    /* Results Panel */
+    .results-panel {
+      display: none;
+      background-color: var(--panel);
+      border: 1px solid var(--hairline);
+      border-radius: 2px;
+      padding: 24px;
+      margin-top: 24px;
+    }
+
+    .results-panel.visible {
+      display: block;
+    }
+
+    /* Verdict Banner */
+    .verdict-banner {
+      padding: 14px 16px;
+      border-radius: 2px;
+      margin-bottom: 24px;
+      border: 1px solid transparent;
+    }
+
+    .verdict-banner.valid {
+      background-color: rgba(79, 158, 130, 0.12);
+      border-color: var(--verdigris);
+      color: var(--paper);
+    }
+
+    .verdict-banner.corrupted {
+      background-color: rgba(193, 92, 66, 0.12);
+      border-color: var(--rust);
+      color: var(--paper);
+    }
+
+    .verdict-title {
+      font-weight: 500;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .verdict-hash {
+      color: var(--muted);
+      font-size: 12px;
+      word-break: break-all;
+    }
+
+    /* Data Rows */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 24px;
+    }
+
+    .data-table tr {
+      border-bottom: 1px solid var(--hairline);
+    }
+
+    .data-table tr:last-child {
+      border-bottom: none;
+    }
+
+    .data-table td {
+      padding: 8px 0;
+      font-size: 14px;
+      vertical-align: top;
+    }
+
+    .data-label {
+      color: var(--muted);
+      width: 40%;
+    }
+
+    .data-val {
+      color: var(--paper);
+      text-align: right;
+    }
+
+    /* Compression Toggle */
+    .toggle-group {
+      margin-bottom: 24px;
+    }
+
+    .toggle-label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn-toggle {
+      background-color: var(--block);
+      border: 1px solid var(--hairline);
+      color: var(--paper);
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 2px;
+      font-family: inherit;
+    }
+
+    .btn-toggle:hover {
+      border-color: var(--paper);
+    }
+
+    .btn-toggle.active {
+      border-color: var(--verdigris);
+      background-color: rgba(79, 158, 130, 0.15);
+      color: var(--paper);
+    }
+
+    .btn-toggle:focus-visible {
+      outline: var(--focus-ring);
+    }
+
+    /* Primary Action Button */
+    .btn-primary {
+      background-color: var(--verdigris);
+      border: 1px solid var(--verdigris);
+      color: var(--ink);
+      font-weight: 600;
+      font-size: 15px;
+      padding: 10px 20px;
+      cursor: pointer;
+      border-radius: 2px;
+      font-family: "IBM Plex Sans", sans-serif;
+      transition: opacity 150ms ease;
+      display: inline-block;
+    }
+
+    .btn-primary:hover {
+      opacity: 0.9;
+    }
+
+    .btn-primary:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: 2px;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Inline Error Box */
+    .error-box {
+      background-color: rgba(193, 92, 66, 0.12);
+      border: 1px solid var(--rust);
+      border-radius: 2px;
+      padding: 16px;
+      color: var(--paper);
+      margin-top: 16px;
+    }
+
+    .error-box-title {
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+
+    .error-box-detail {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .error-box-code {
+      margin-top: 8px;
+      padding: 6px 10px;
+      background-color: var(--ink);
+      border: 1px solid var(--hairline);
+      border-radius: 2px;
+      font-size: 12px;
+      color: var(--paper);
+      display: inline-block;
+    }
+
+    /* Responsive */
+    @media (max-width: 480px) {
+      body {
+        padding: 24px 14px 48px 14px;
+      }
+      .data-table td {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 4px 0;
+      }
+      .data-val {
+        text-align: left;
+        margin-bottom: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <h1>IMETA</h1>
+      <p class="tagline">Encodes an image into a binary container it can decode back byte-for-byte, verified against a SHA-256 digest.</p>
+    </header>
+
+    <!-- The Container Map -->
+    <section class="map-container" aria-label="Container layout">
+      <div class="section-label">Container map</div>
+      <div class="stack">
+        <!-- Block 1: File Header -->
+        <div class="map-block fixed" id="block-file-header">
+          <div class="block-name">
+            <span>File header</span>
+            <span class="mono block-magic">IMTA</span>
+          </div>
+          <div class="mono block-size">32 B</div>
+        </div>
+
+        <!-- Block 2: Metadata -->
+        <div class="map-block variable" id="block-metadata">
+          <div class="block-name">
+            <span>Metadata</span>
+            <span class="mono block-magic">META</span>
+          </div>
+          <div class="mono block-size" id="size-metadata">—</div>
+        </div>
+
+        <!-- Block 3: Payload -->
+        <div class="map-block variable" id="block-payload">
+          <div class="block-name">
+            <span>Payload</span>
+            <span class="mono block-magic">DATA</span>
+          </div>
+          <div class="mono block-size" id="size-payload">—</div>
+        </div>
+
+        <!-- Block 4: Integrity Block -->
+        <div class="map-block fixed" id="block-integrity">
+          <div class="block-name">
+            <span>Integrity block</span>
+            <span class="mono block-magic">HASH</span>
+          </div>
+          <div class="mono block-size">40 B</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Drop / Select Area -->
+    <section class="drop-area-wrapper">
+      <label class="drop-zone" id="drop-zone" for="file-input" tabindex="0">
+        <div class="drop-prompt" id="drop-prompt-text">Drop an image or a .imeta file, or choose one.</div>
+        <div class="drop-subtext" id="drop-subtext">JPEG, PNG, WebP or .imeta container</div>
+        <input type="file" id="file-input" class="visually-hidden" accept="image/jpeg,image/png,image/webp,.imeta">
+      </label>
+    </section>
+
+    <!-- Settings Affordance -->
+    <div class="settings-bar">
+      <span>Using <span class="mono" id="current-api-origin"></span></span>
+      <span>·</span>
+      <button type="button" class="btn-link" id="toggle-settings-btn">change</button>
+      <div class="settings-form" id="settings-form">
+        <input type="text" class="text-input" id="api-base-input" placeholder="http://127.0.0.1:8000" spellcheck="false">
+        <button type="button" class="btn-sm" id="save-settings-btn">Save</button>
+        <button type="button" class="btn-sm" id="reset-settings-btn">Reset</button>
+      </div>
+    </div>
+
+    <!-- Results Panel -->
+    <section class="results-panel" id="results-panel" aria-live="polite">
+      <!-- Error state container -->
+      <div id="error-container" style="display: none;"></div>
+
+      <!-- Content container -->
+      <div id="content-container"></div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      // Configuration & State
+      const STORAGE_KEY = 'imeta-api-base';
+      let currentFile = null;
+      let inspectData = null;
+      let verifyData = null;
+      let selectedCompression = 'none';
+
+      // DOM Elements
+      const dropZone = document.getElementById('drop-zone');
+      const fileInput = document.getElementById('file-input');
+      const dropPromptText = document.getElementById('drop-prompt-text');
+      const dropSubtext = document.getElementById('drop-subtext');
+      const resultsPanel = document.getElementById('results-panel');
+      const errorContainer = document.getElementById('error-container');
+      const contentContainer = document.getElementById('content-container');
+
+      const blockMetadata = document.getElementById('block-metadata');
+      const blockPayload = document.getElementById('block-payload');
+      const sizeMetadata = document.getElementById('size-metadata');
+      const sizePayload = document.getElementById('size-payload');
+
+      const currentApiOriginEl = document.getElementById('current-api-origin');
+      const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
+      const settingsForm = document.getElementById('settings-form');
+      const apiBaseInput = document.getElementById('api-base-input');
+      const saveSettingsBtn = document.getElementById('save-settings-btn');
+      const resetSettingsBtn = document.getElementById('reset-settings-btn');
+
+      // API Base resolution
+      function getApiBase() {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored && stored.trim()) {
+          return stored.trim().replace(/\/+$/, '');
+        }
+        return window.location.origin;
+      }
+
+      function updateOriginDisplay() {
+        const base = getApiBase();
+        currentApiOriginEl.textContent = base;
+        apiBaseInput.value = base;
+      }
+
+      updateOriginDisplay();
+
+      toggleSettingsBtn.addEventListener('click', () => {
+        settingsForm.classList.toggle('open');
+      });
+
+      saveSettingsBtn.addEventListener('click', () => {
+        const val = apiBaseInput.value.trim();
+        if (val) {
+          localStorage.setItem(STORAGE_KEY, val);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+        updateOriginDisplay();
+        settingsForm.classList.remove('open');
+      });
+
+      resetSettingsBtn.addEventListener('click', () => {
+        localStorage.removeItem(STORAGE_KEY);
+        updateOriginDisplay();
+        settingsForm.classList.remove('open');
+      });
+
+      // Byte Formatting
+      function formatBytes(bytes) {
+        if (bytes === null || bytes === undefined || isNaN(bytes)) return '—';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+      }
+
+      // Height scaling for map blocks based on log2
+      function computeBlockHeight(byteSize) {
+        if (!byteSize || byteSize <= 0) return 40;
+        // Scale logarithmically: base 40px, up to max ~130px
+        const logVal = Math.log2(byteSize + 1);
+        return Math.min(130, Math.max(40, Math.round(40 + logVal * 3.5)));
+      }
+
+      function updateContainerMap(metaBytes, payloadBytes) {
+        if (metaBytes !== null && metaBytes !== undefined) {
+          sizeMetadata.textContent = '~' + formatBytes(metaBytes);
+          blockMetadata.style.height = computeBlockHeight(metaBytes) + 'px';
+        } else {
+          sizeMetadata.textContent = '—';
+          blockMetadata.style.height = '40px';
+        }
+
+        if (payloadBytes !== null && payloadBytes !== undefined) {
+          sizePayload.textContent = formatBytes(payloadBytes);
+          blockPayload.style.height = computeBlockHeight(payloadBytes) + 'px';
+        } else {
+          sizePayload.textContent = '—';
+          blockPayload.style.height = '40px';
+        }
+      }
+
+      // Drag and Drop & Keyboard handlers
+      ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.add('dragover');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.remove('dragover');
+        });
+      });
+
+      dropZone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+          handleFileSelection(files[0]);
+        }
+      });
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          handleFileSelection(e.target.files[0]);
+        }
+      });
+
+      dropZone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          fileInput.click();
+        }
+      });
+
+      // Main file processing handler
+      async function handleFileSelection(file) {
+        currentFile = file;
+        inspectData = null;
+        verifyData = null;
+        selectedCompression = 'none';
+
+        dropPromptText.textContent = file.name;
+        dropSubtext.textContent = formatBytes(file.size);
+
+        // Immediate UI feedback: update payload bar with file's known size
+        updateContainerMap(null, file.size);
+
+        // Reset results UI
+        errorContainer.style.display = 'none';
+        errorContainer.innerHTML = '';
+        contentContainer.innerHTML = '<p class="data-label" style="padding: 12px 0;">Inspecting file...</p>';
+        resultsPanel.classList.add('visible');
+
+        try {
+          // 1. POST to /inspect
+          const inspectFormData = new FormData();
+          inspectFormData.append('file', file);
+
+          const apiBase = getApiBase();
+          const inspectRes = await fetch(apiBase + '/inspect', {
+            method: 'POST',
+            body: inspectFormData
+          });
+
+          if (!inspectRes.ok) {
+            const errJson = await inspectRes.json().catch(() => ({}));
+            const msg = errJson.detail || ('Inspection failed with status ' + inspectRes.status);
+            showError(msg);
+            return;
+          }
+
+          inspectData = await inspectRes.json();
+
+          // Approximate metadata JSON byte size
+          let metaSizeApprox = 0;
+          if (inspectData.metadata) {
+            metaSizeApprox = new Blob([JSON.stringify(inspectData.metadata)]).size;
+          }
+
+          if (inspectData.container_type === 'IMETA v1.0') {
+            // Auto-verify .imeta containers
+            contentContainer.innerHTML = '<p class="data-label" style="padding: 12px 0;">Verifying container integrity...</p>';
+            
+            const verifyFormData = new FormData();
+            verifyFormData.append('file', file);
+
+            const verifyRes = await fetch(apiBase + '/verify', {
+              method: 'POST',
+              body: verifyFormData
+            });
+
+            if (!verifyRes.ok) {
+              const errJson = await verifyRes.json().catch(() => ({}));
+              showError(errJson.detail || ('Verification failed with status ' + verifyRes.status));
+              return;
+            }
+
+            verifyData = await verifyRes.json();
+            
+            // For .imeta, use exact stored_size from verification for payload bar
+            const payloadBytes = verifyData.stored_size !== null ? verifyData.stored_size : file.size;
+            updateContainerMap(metaSizeApprox, payloadBytes);
+            renderImetaResults();
+          } else {
+            // Raw Image
+            updateContainerMap(metaSizeApprox, file.size);
+            renderRawImageResults();
+          }
+        } catch (err) {
+          showNetworkError(err);
+        }
+      }
+
+      function showError(message) {
+        errorContainer.innerHTML = `
+          <div class="error-box">
+            <div class="error-box-title">Error</div>
+            <div class="error-box-detail">${escapeHtml(message)}</div>
+          </div>
+        `;
+        errorContainer.style.display = 'block';
+        contentContainer.innerHTML = '';
+      }
+
+      function showNetworkError(err) {
+        errorContainer.innerHTML = `
+          <div class="error-box">
+            <div class="error-box-title">Connection failure</div>
+            <div class="error-box-detail">Can't reach the IMETA server. Start it with:</div>
+            <div class="mono error-box-code">uvicorn imeta.api.server:app --port 8000</div>
+            <div class="error-box-detail" style="margin-top: 8px;">Technical details: ${escapeHtml(err.message || err.toString())}</div>
+          </div>
+        `;
+        errorContainer.style.display = 'block';
+        contentContainer.innerHTML = '';
+      }
+
+      // Render Raw Image Results
+      function renderRawImageResults() {
+        errorContainer.style.display = 'none';
+        const meta = inspectData.metadata || {};
+
+        const exifCount = meta.exif ? Object.keys(meta.exif).length : 0;
+        const xmpCount = meta.xmp ? Object.keys(meta.xmp).length : 0;
+        const iptcCount = meta.iptc ? Object.keys(meta.iptc).length : 0;
+
+        contentContainer.innerHTML = `
+          <table class="data-table">
+            <tbody>
+              <tr>
+                <td class="data-label">Format</td>
+                <td class="data-val">${escapeHtml(inspectData.format_name || 'Unknown')}</td>
+              </tr>
+              <tr>
+                <td class="data-label">Dimensions</td>
+                <td class="data-val">${meta.width || 0} × ${meta.height || 0} px</td>
+              </tr>
+              <tr>
+                <td class="data-label">Color model</td>
+                <td class="data-val">${escapeHtml(meta.color_model || 'RGB')}</td>
+              </tr>
+              <tr>
+                <td class="data-label">Bit depth</td>
+                <td class="data-val">${meta.bit_depth || 8} bit</td>
+              </tr>
+              <tr>
+                <td class="data-label">Metadata tags</td>
+                <td class="data-val">EXIF: ${exifCount} fields · XMP: ${xmpCount} fields · IPTC: ${iptcCount} fields</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="toggle-group">
+            <div class="toggle-label">Payload compression</div>
+            <div class="button-group">
+              <button type="button" class="btn-toggle active" id="btn-comp-none" data-comp="none">No compression</button>
+              <button type="button" class="btn-toggle" id="btn-comp-deflate" data-comp="deflate">DEFLATE</button>
+            </div>
+          </div>
+
+          <div>
+            <button type="button" class="btn-primary" id="btn-encode">Encode to .imeta</button>
+          </div>
+        `;
+
+        // Compression buttons
+        const btnNone = document.getElementById('btn-comp-none');
+        const btnDeflate = document.getElementById('btn-comp-deflate');
+        const btnEncode = document.getElementById('btn-encode');
+
+        btnNone.addEventListener('click', () => {
+          selectedCompression = 'none';
+          btnNone.classList.add('active');
+          btnDeflate.classList.remove('active');
+        });
+
+        btnDeflate.addEventListener('click', () => {
+          selectedCompression = 'deflate';
+          btnDeflate.classList.add('active');
+          btnNone.classList.remove('active');
+        });
+
+        btnEncode.addEventListener('click', executeEncode);
+      }
+
+      // Encode Action
+      async function executeEncode() {
+        const btn = document.getElementById('btn-encode');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Encoding...';
+        }
+
+        try {
+          const formData = new FormData();
+          formData.append('file', currentFile);
+          formData.append('compression', selectedCompression);
+
+          const apiBase = getApiBase();
+          const res = await fetch(apiBase + '/encode', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            showError(errJson.detail || ('Encoding failed with status ' + res.status));
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = 'Encode to .imeta';
+            }
+            return;
+          }
+
+          const blob = await res.blob();
+          const filenameStem = currentFile.name.replace(/\.[^/.]+$/, '');
+          const downloadName = filenameStem + '.imeta';
+
+          triggerDownload(blob, downloadName);
+
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Encode to .imeta';
+          }
+        } catch (err) {
+          showNetworkError(err);
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Encode to .imeta';
+          }
+        }
+      }
+
+      // Render IMETA Results
+      function renderImetaResults() {
+        errorContainer.style.display = 'none';
+        const meta = inspectData.metadata || {};
+        const isValid = verifyData.is_valid;
+        const status = verifyData.status;
+
+        let verdictHtml = '';
+        if (isValid) {
+          verdictHtml = `
+            <div class="verdict-banner valid">
+              <div class="verdict-title">Verified — reconstructs byte-for-byte to the original.</div>
+              <div class="mono verdict-hash">SHA-256: ${escapeHtml(verifyData.computed_sha256 || verifyData.expected_sha256 || '')}</div>
+            </div>
+          `;
+        } else {
+          let failureReason = 'Integrity verification failed';
+          if (verifyData.errors && verifyData.errors.length > 0) {
+            failureReason = verifyData.errors[0];
+          } else if (status === 'INCOMPATIBLE_VERSION') {
+            failureReason = 'Incompatible major container version';
+          } else if (status === 'CORRUPTED') {
+            failureReason = "Corrupted container — structure or checksum doesn't match";
+          }
+
+          verdictHtml = `
+            <div class="verdict-banner corrupted">
+              <div class="verdict-title">${escapeHtml(failureReason)}</div>
+              ${verifyData.computed_sha256 ? `<div class="mono verdict-hash">Computed: ${escapeHtml(verifyData.computed_sha256)}</div>` : ''}
+            </div>
+          `;
+        }
+
+        const formatName = inspectData.format_name || (verifyData.format_id ? 'Format ID 0x' + verifyData.format_id.toString(16) : 'Unknown');
+        const versionStr = (verifyData.major_version !== null ? verifyData.major_version : inspectData.major_version || 1) + '.' + (verifyData.minor_version !== null ? verifyData.minor_version : inspectData.minor_version || 0);
+        const compStr = inspectData.compression || 'None';
+
+        contentContainer.innerHTML = `
+          ${verdictHtml}
+
+          <table class="data-table">
+            <tbody>
+              <tr>
+                <td class="data-label">Format</td>
+                <td class="data-val mono">${escapeHtml(formatName)}</td>
+              </tr>
+              <tr>
+                <td class="data-label">Version</td>
+                <td class="data-val mono">${escapeHtml(versionStr)}</td>
+              </tr>
+              <tr>
+                <td class="data-label">Compression</td>
+                <td class="data-val mono">${escapeHtml(compStr)}</td>
+              </tr>
+              <tr>
+                <td class="data-label">Original payload size</td>
+                <td class="data-val mono">${formatBytes(verifyData.original_size || meta.original_size || 0)}</td>
+              </tr>
+              <tr>
+                <td class="data-label">Stored payload size</td>
+                <td class="data-val mono">${formatBytes(verifyData.stored_size || meta.stored_size || 0)}</td>
+              </tr>
+              <tr>
+                <td class="data-label">Dimensions</td>
+                <td class="data-val">${meta.width || 0} × ${meta.height || 0} px</td>
+              </tr>
+              <tr>
+                <td class="data-label">Color model</td>
+                <td class="data-val">${escapeHtml(meta.color_model || 'RGB')}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div>
+            <button type="button" class="btn-primary" id="btn-decode">Decode to original</button>
+          </div>
+        `;
+
+        const btnDecode = document.getElementById('btn-decode');
+        btnDecode.addEventListener('click', executeDecode);
+      }
+
+      // Decode Action
+      async function executeDecode() {
+        const btn = document.getElementById('btn-decode');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Decoding...';
+        }
+
+        try {
+          const formData = new FormData();
+          formData.append('file', currentFile);
+          formData.append('verify', 'true');
+
+          const apiBase = getApiBase();
+          const res = await fetch(apiBase + '/decode', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            showError(errJson.detail || ('Decoding failed with status ' + res.status));
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = 'Decode to original';
+            }
+            return;
+          }
+
+          const contentType = res.headers.get('content-type') || '';
+          let ext = '.bin';
+          if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = '.jpg';
+          else if (contentType.includes('png')) ext = '.png';
+          else if (contentType.includes('webp')) ext = '.webp';
+          else if (inspectData && inspectData.metadata && inspectData.metadata.extension) {
+            ext = inspectData.metadata.extension;
+          }
+
+          let stem = currentFile.name.replace(/\.[^/.]+$/, '');
+          if (stem.endsWith('.imeta')) stem = stem.slice(0, -6);
+          const downloadName = stem + ext;
+
+          const blob = await res.blob();
+          triggerDownload(blob, downloadName);
+
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Decode to original';
+          }
+        } catch (err) {
+          showNetworkError(err);
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Decode to original';
+          }
+        }
+      }
+
+      // Helper to trigger file download and clean up object URL
+      function triggerDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      // HTML Escape Helper
+      function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -51,12 +51,19 @@ app.add_middleware(
 )
 
 
+from fastapi.staticfiles import StaticFiles
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+app.mount("/ui", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
+
+
 @app.get("/")
 def read_root():
     return {
         "service": "IMETA Image Serialization Engine",
         "version": "1.0.0",
         "status": "operational",
+        "ui": "/ui/",
     }
 
 

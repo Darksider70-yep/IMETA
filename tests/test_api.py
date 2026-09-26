@@ -13,6 +13,13 @@ def test_api_health():
     assert res.json() == {"status": "ok"}
 
 
+def test_api_ui_endpoint():
+    res = client.get("/ui/")
+    assert res.status_code == 200
+    assert "IMETA" in res.text
+    assert "container map" in res.text.lower()
+
+
 def test_api_encode_and_decode_roundtrip(sample_png_bytes):
     # 1. POST /encode
     encode_res = client.post(
