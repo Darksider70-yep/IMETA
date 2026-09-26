@@ -21,6 +21,13 @@ def redact_gps(exif_tiff_bytes: bytes) -> Tuple[bytes, bool]:
     Returns (possibly-modified copy of exif_tiff_bytes, succeeded).
     succeeded=False means the structure was not safely editable without risking
     other metadata corruption, so caller must fall back to full EXIF removal.
+
+    Note on scope:
+      This surgical redactor inspects and modifies IFD0 and its linked GPS sub-IFD
+      (tag 0x8825). It intentionally does not traverse the secondary IFD1 chain
+      (embedded thumbnail IFD). In rare scenarios where hardware records location
+      metadata into IFD1, users requiring absolute forensic redaction should use
+      full EXIF removal (remove_exif=True) instead of GPS-only mode.
     """
     if not exif_tiff_bytes or len(exif_tiff_bytes) < 8:
         return (exif_tiff_bytes, False)

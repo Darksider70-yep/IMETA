@@ -124,6 +124,14 @@ uvicorn imeta.api.server:app --host 127.0.0.1 --port 8000
 
 ---
 
+## Metadata Sanitization & Scope Notes
+The `POST /sanitize` endpoint exports a modified copy of an image with specific metadata strips:
+- **Remove all EXIF/XMP/IPTC:** Complete stripping of all metadata segments/chunks.
+- **GPS-only removal:** Surgically zeroes out IFD0's `GPSInfo` tag (0x8825) and its associated GPS sub-IFD while preserving camera properties (Make, Model, etc.).
+- **Scope note on secondary IFD1:** GPS-only redaction targets the primary IFD0 structure and its linked sub-IFDs. In rare cases where hardware duplicates geotags into IFD1 (embedded thumbnail IFD), use **full EXIF removal** (`remove_exif=True`) for absolute forensic stripping.
+
+---
+
 ## Running Tests
 
 Run the full automated test suite:
