@@ -294,6 +294,25 @@
       display: block;
     }
 
+    /* Inline Image Preview */
+    .preview-wrapper {
+      margin-bottom: 24px;
+    }
+
+    .preview-img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border: 1px solid var(--hairline);
+      border-radius: 0;
+    }
+
+    .preview-unavailable {
+      font-size: 14px;
+      color: var(--muted);
+      padding: 8px 0 16px 0;
+    }
+
     /* Verdict Banner */
     .verdict-banner {
       padding: 14px 16px;
@@ -357,9 +376,9 @@
       text-align: right;
     }
 
-    /* Compression Toggle */
+    /* Toggle Groups */
     .toggle-group {
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
 
     .toggle-label {
@@ -370,6 +389,7 @@
 
     .button-group {
       display: flex;
+      flex-wrap: wrap;
       gap: 6px;
     }
 
@@ -427,6 +447,59 @@
       cursor: not-allowed;
     }
 
+    /* Sanitize Panel */
+    .sanitize-divider {
+      border: none;
+      border-top: 1px solid var(--hairline);
+      margin: 32px 0 24px 0;
+    }
+
+    .sanitize-heading {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--paper);
+      margin-bottom: 16px;
+    }
+
+    .checkbox-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--paper);
+      cursor: pointer;
+    }
+
+    .checkbox-label.disabled {
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    .checkbox-input {
+      accent-color: var(--verdigris);
+      cursor: pointer;
+      width: 16px;
+      height: 16px;
+    }
+
+    .checkbox-input:disabled {
+      cursor: not-allowed;
+    }
+
+    .sanitize-feedback {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
     /* Inline Error Box */
     .error-box {
       background-color: rgba(193, 92, 66, 0.12);
@@ -473,6 +546,9 @@
       .data-val {
         text-align: left;
         margin-bottom: 8px;
+      }
+      .button-group {
+        flex-direction: column;
       }
     }
   </style>
@@ -522,7 +598,7 @@
             <span>Integrity block</span>
             <span class="mono block-magic">HASH</span>
           </div>
-          <div class="mono block-size">40 B</div>
+          <div class="mono block-size" id="size-integrity">40 B</div>
         </div>
       </div>
     </section>
@@ -566,6 +642,10 @@
       let inspectData = null;
       let verifyData = null;
       let selectedCompression = 'none';
+      let currentPreviewUrl = null;
+      let cachedDecodedBlob = null;
+      let cachedDecodedContentType = null;
+      let sanitizeMode = 'all'; // 'all' or 'gps'
 
       // DOM Elements
       const dropZone = document.getElementById('drop-zone');
@@ -637,7 +717,6 @@
       // Height scaling for map blocks based on log2
       function computeBlockHeight(byteSize) {
         if (!byteSize || byteSize <= 0) return 40;
-        // Scale logarithmically: base 40px, up to max ~130px
         const logVal = Math.log2(byteSize + 1);
         return Math.min(130, Math.max(40, Math.round(40 + logVal * 3.5)));
       }
@@ -658,6 +737,16 @@
           sizePayload.textContent = '—';
           blockPayload.style.height = '40px';
         }
+      }
+
+      // Clean up previous preview object URL
+      function cleanupPreview() {
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+          currentPreviewUrl = null;
+        }
+        cachedDecodedBlob = null;
+        cachedDecodedContentType = null;
       }
 
       // Drag and Drop & Keyboard handlers
@@ -699,10 +788,13 @@
 
       // Main file processing handler
       async function handleFileSelection(file) {
+        cleanupPreview();
+
         currentFile = file;
         inspectData = null;
         verifyData = null;
         selectedCompression = 'none';
+        sanitizeMode = 'all';
 
         dropPromptText.textContent = file.name;
         dropSubtext.textContent = formatBytes(file.size);
@@ -715,6 +807,12 @@
         errorContainer.innerHTML = '';
         contentContainer.innerHTML = '<p class="data-label" style="padding: 12px 0;">Inspecting file...</p>';
         resultsPanel.classList.add('visible');
+
+        // Check file extension to immediately generate raw image preview if client-side renderable
+        const isImetaByExt = file.name.toLowerCase().endsWith('.imeta');
+        if (!isImetaByExt) {
+          currentPreviewUrl = URL.createObjectURL(file);
+        }
 
         try {
           // 1. POST to /inspect
@@ -743,7 +841,12 @@
           }
 
           if (inspectData.container_type === 'IMETA v1.0') {
-            // Auto-verify .imeta containers
+            // Container file: clean up any preemptive raw preview URL
+            if (currentPreviewUrl && !isImetaByExt) {
+              URL.revokeObjectURL(currentPreviewUrl);
+              currentPreviewUrl = null;
+            }
+
             contentContainer.innerHTML = '<p class="data-label" style="padding: 12px 0;">Verifying container integrity...</p>';
             
             const verifyFormData = new FormData();
@@ -765,9 +868,35 @@
             // For .imeta, use exact stored_size from verification for payload bar
             const payloadBytes = verifyData.stored_size !== null ? verifyData.stored_size : file.size;
             updateContainerMap(metaSizeApprox, payloadBytes);
+
+            // If verification succeeded, automatically call /decode to generate preview
+            if (verifyData.is_valid) {
+              try {
+                const decodeFormData = new FormData();
+                decodeFormData.append('file', file);
+                decodeFormData.append('verify', 'true');
+
+                const decodeRes = await fetch(apiBase + '/decode', {
+                  method: 'POST',
+                  body: decodeFormData
+                });
+
+                if (decodeRes.ok) {
+                  cachedDecodedBlob = await decodeRes.blob();
+                  cachedDecodedContentType = decodeRes.headers.get('content-type') || '';
+                  currentPreviewUrl = URL.createObjectURL(cachedDecodedBlob);
+                }
+              } catch (e) {
+                // If decode fails, cachedDecodedBlob remains null
+              }
+            }
+
             renderImetaResults();
           } else {
             // Raw Image
+            if (!currentPreviewUrl) {
+              currentPreviewUrl = URL.createObjectURL(file);
+            }
             updateContainerMap(metaSizeApprox, file.size);
             renderRawImageResults();
           }
@@ -800,6 +929,161 @@
         contentContainer.innerHTML = '';
       }
 
+      // Reusable Sanitize Panel HTML
+      function getSanitizePanelHtml() {
+        return `
+          <hr class="sanitize-divider">
+          <div class="sanitize-heading">Remove metadata</div>
+          <div class="toggle-group">
+            <div class="button-group">
+              <button type="button" class="btn-toggle active" id="btn-san-all">Remove all EXIF/XMP/IPTC</button>
+              <button type="button" class="btn-toggle" id="btn-san-gps">Remove GPS only, keep other EXIF</button>
+            </div>
+          </div>
+          <div class="checkbox-group">
+            <label class="checkbox-label disabled" id="lbl-chk-xmp">
+              <input type="checkbox" id="chk-xmp" class="checkbox-input" checked disabled>
+              <span>Also remove XMP</span>
+            </label>
+            <label class="checkbox-label disabled" id="lbl-chk-iptc">
+              <input type="checkbox" id="chk-iptc" class="checkbox-input" checked disabled>
+              <span>Also remove IPTC</span>
+            </label>
+          </div>
+          <div>
+            <button type="button" class="btn-primary" id="btn-sanitize">Export sanitized copy</button>
+          </div>
+          <div id="sanitize-feedback" class="sanitize-feedback"></div>
+        `;
+      }
+
+      // Wire Sanitize Panel event listeners
+      function wireSanitizeEvents() {
+        const btnSanAll = document.getElementById('btn-san-all');
+        const btnSanGps = document.getElementById('btn-san-gps');
+        const chkXmp = document.getElementById('chk-xmp');
+        const chkIptc = document.getElementById('chk-iptc');
+        const lblXmp = document.getElementById('lbl-chk-xmp');
+        const lblIptc = document.getElementById('lbl-chk-iptc');
+        const btnSanitize = document.getElementById('btn-sanitize');
+
+        if (!btnSanAll || !btnSanGps || !btnSanitize) return;
+
+        btnSanAll.addEventListener('click', () => {
+          sanitizeMode = 'all';
+          btnSanAll.classList.add('active');
+          btnSanGps.classList.remove('active');
+          chkXmp.checked = true;
+          chkXmp.disabled = true;
+          lblXmp.classList.add('disabled');
+          chkIptc.checked = true;
+          chkIptc.disabled = true;
+          lblIptc.classList.add('disabled');
+        });
+
+        btnSanGps.addEventListener('click', () => {
+          sanitizeMode = 'gps';
+          btnSanGps.classList.add('active');
+          btnSanAll.classList.remove('active');
+          chkXmp.disabled = false;
+          lblXmp.classList.remove('disabled');
+          chkIptc.disabled = false;
+          lblIptc.classList.remove('disabled');
+        });
+
+        btnSanitize.addEventListener('click', executeSanitize);
+      }
+
+      // Execute Sanitize Action
+      async function executeSanitize() {
+        const btn = document.getElementById('btn-sanitize');
+        const feedback = document.getElementById('sanitize-feedback');
+        const chkXmp = document.getElementById('chk-xmp');
+        const chkIptc = document.getElementById('chk-iptc');
+
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Sanitizing...';
+        }
+        if (feedback) feedback.innerHTML = '';
+
+        try {
+          const formData = new FormData();
+          formData.append('file', currentFile);
+
+          if (sanitizeMode === 'all') {
+            formData.append('remove_exif', 'true');
+            formData.append('remove_gps_only', 'false');
+            formData.append('remove_xmp', 'true');
+            formData.append('remove_iptc', 'true');
+          } else {
+            formData.append('remove_exif', 'false');
+            formData.append('remove_gps_only', 'true');
+            formData.append('remove_xmp', chkXmp && chkXmp.checked ? 'true' : 'false');
+            formData.append('remove_iptc', chkIptc && chkIptc.checked ? 'true' : 'false');
+          }
+
+          const apiBase = getApiBase();
+          const res = await fetch(apiBase + '/sanitize', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            showError(errJson.detail || ('Sanitization failed with status ' + res.status));
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = 'Export sanitized copy';
+            }
+            return;
+          }
+
+          const removedHeader = res.headers.get('x-imeta-removed') || '';
+          const downgraded = res.headers.get('x-imeta-gps-downgraded') === 'true';
+          const newSha = res.headers.get('x-imeta-new-sha256') || '';
+
+          const cd = res.headers.get('content-disposition') || '';
+          let downloadName = '';
+          const match = cd.match(/filename="?([^"]+)"?/);
+          if (match) {
+            downloadName = match[1];
+          } else {
+            let stem = currentFile.name.replace(/\.[^/.]+$/, '');
+            if (stem.endsWith('.imeta')) stem = stem.slice(0, -6);
+            let ext = '.png';
+            const ct = res.headers.get('content-type') || '';
+            if (ct.includes('jpeg') || ct.includes('jpg')) ext = '.jpg';
+            else if (ct.includes('webp')) ext = '.webp';
+            downloadName = stem + '_sanitized' + ext;
+          }
+
+          const blob = await res.blob();
+          triggerDownload(blob, downloadName);
+
+          let feedbackHtml = '';
+          if (downgraded) {
+            feedbackHtml += '<div style="margin-bottom: 4px;">GPS-only removal wasn\'t safely possible for this file\'s structure, so all EXIF was removed instead.</div>';
+          }
+          feedbackHtml += `<div>Removed: ${escapeHtml(removedHeader || 'None')}. This is a modified copy — SHA-256 <span class="mono">${escapeHtml(newSha)}</span>. It no longer matches the original file.</div>`;
+
+          if (feedback) {
+            feedback.innerHTML = feedbackHtml;
+          }
+
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Export sanitized copy';
+          }
+        } catch (err) {
+          showNetworkError(err);
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Export sanitized copy';
+          }
+        }
+      }
+
       // Render Raw Image Results
       function renderRawImageResults() {
         errorContainer.style.display = 'none';
@@ -809,7 +1093,15 @@
         const xmpCount = meta.xmp ? Object.keys(meta.xmp).length : 0;
         const iptcCount = meta.iptc ? Object.keys(meta.iptc).length : 0;
 
+        const previewHtml = currentPreviewUrl ? `
+          <div class="preview-wrapper">
+            <img class="preview-img" src="${currentPreviewUrl}" alt="Input image preview">
+          </div>
+        ` : '';
+
         contentContainer.innerHTML = `
+          ${previewHtml}
+
           <table class="data-table">
             <tbody>
               <tr>
@@ -846,6 +1138,8 @@
           <div>
             <button type="button" class="btn-primary" id="btn-encode">Encode to .imeta</button>
           </div>
+
+          ${getSanitizePanelHtml()}
         `;
 
         // Compression buttons
@@ -866,6 +1160,9 @@
         });
 
         btnEncode.addEventListener('click', executeEncode);
+
+        // Sanitize controls
+        wireSanitizeEvents();
       }
 
       // Encode Action
@@ -949,12 +1246,28 @@
           `;
         }
 
+        // Preview block for IMETA
+        let previewHtml = '';
+        if (isValid && currentPreviewUrl) {
+          previewHtml = `
+            <div class="preview-wrapper">
+              <img class="preview-img" src="${currentPreviewUrl}" alt="Reconstructed image preview">
+            </div>
+          `;
+        } else if (!isValid) {
+          previewHtml = `
+            <div class="preview-unavailable">Preview unavailable — container failed integrity verification.</div>
+          `;
+        }
+
         const formatName = inspectData.format_name || (verifyData.format_id ? 'Format ID 0x' + verifyData.format_id.toString(16) : 'Unknown');
         const versionStr = (verifyData.major_version !== null ? verifyData.major_version : inspectData.major_version || 1) + '.' + (verifyData.minor_version !== null ? verifyData.minor_version : inspectData.minor_version || 0);
         const compStr = inspectData.compression || 'None';
 
         contentContainer.innerHTML = `
           ${verdictHtml}
+
+          ${previewHtml}
 
           <table class="data-table">
             <tbody>
@@ -992,10 +1305,15 @@
           <div>
             <button type="button" class="btn-primary" id="btn-decode">Decode to original</button>
           </div>
+
+          ${getSanitizePanelHtml()}
         `;
 
         const btnDecode = document.getElementById('btn-decode');
         btnDecode.addEventListener('click', executeDecode);
+
+        // Sanitize controls
+        wireSanitizeEvents();
       }
 
       // Decode Action
@@ -1007,6 +1325,30 @@
         }
 
         try {
+          // If already decoded and cached in memory, download immediately without re-fetching
+          if (cachedDecodedBlob) {
+            let ext = '.bin';
+            if (cachedDecodedContentType && (cachedDecodedContentType.includes('jpeg') || cachedDecodedContentType.includes('jpg'))) ext = '.jpg';
+            else if (cachedDecodedContentType && cachedDecodedContentType.includes('png')) ext = '.png';
+            else if (cachedDecodedContentType && cachedDecodedContentType.includes('webp')) ext = '.webp';
+            else if (inspectData && inspectData.metadata && inspectData.metadata.extension) {
+              ext = inspectData.metadata.extension;
+            }
+
+            let stem = currentFile.name.replace(/\.[^/.]+$/, '');
+            if (stem.endsWith('.imeta')) stem = stem.slice(0, -6);
+            const downloadName = stem + ext;
+
+            triggerDownload(cachedDecodedBlob, downloadName);
+
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = 'Decode to original';
+            }
+            return;
+          }
+
+          // Fallback if cached blob not present
           const formData = new FormData();
           formData.append('file', currentFile);
           formData.append('verify', 'true');

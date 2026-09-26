@@ -113,10 +113,12 @@ uvicorn imeta.api.server:app --host 127.0.0.1 --port 8000
 ```
 
 ### Endpoints:
+- `GET /ui/` — Web single-page application interface.
 - `POST /encode` — Upload image (`multipart/form-data`) $\rightarrow$ Download `.imeta` binary container.
 - `POST /decode` — Upload `.imeta` container $\rightarrow$ Download exact reconstructed original image.
 - `POST /verify` — Upload `.imeta` container $\rightarrow$ Receive JSON validation and checksum report.
 - `POST /inspect` — Upload image or `.imeta` $\rightarrow$ Receive JSON format & metadata report.
+- `POST /sanitize` — Export a sanitized image copy with selected EXIF, GPS, XMP, or IPTC metadata removed.
 - `GET /inspect?path=...` — Inspect a file stored on the server.
 - `GET /health` — Service health check.
 
