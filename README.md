@@ -16,9 +16,9 @@ IMETA **never** decodes and re-encodes image pixels. It preserves and reconstruc
 - **Deterministic Binary Container (v1.0):** Sequential, gapless binary layout with authoritative seek offsets.
 - **Fast-path Metadata Access:** Extracted EXIF, XMP, IPTC, dimensions, and color space embedded as uncompressed UTF-8 JSON.
 - **Cryptographic Verification:** Pre-compression SHA-256 integrity block verifying payload authenticity.
-- **Modular Compression Pipeline:** Full uncompressed passthrough with DEFLATE support and decompression bomb protection.
+- **Modular Compression Pipeline:** Full uncompressed passthrough with DEFLATE and Zstandard (`zstd`) support and decompression bomb protection.
 - **Security-First Architecture:** Magic-byte format detection (never trusts extensions or MIME types), strict bounds validation, and safe temp-file handling.
-- **Dual Interfaces:** Rich CLI (`imeta encode|decode|inspect|verify`) and RESTful FastAPI service (`/encode`, `/decode`, `/inspect`, `/verify`).
+- **Dual Interfaces:** Rich CLI (`imeta encode|decode|inspect|verify|sanitize`) and RESTful FastAPI service (`/encode`, `/decode`, `/inspect`, `/verify`, `/sanitize`).
 
 ---
 
@@ -64,8 +64,9 @@ pip install fastapi uvicorn pydantic python-multipart pytest httpx pillow
 # 1. Encode an image into an .imeta container
 python -m imeta.cli.main encode photo.jpg -o photo.imeta
 
-# 2. Encode with DEFLATE compression
+# 2. Encode with DEFLATE or Zstandard compression
 python -m imeta.cli.main encode photo.png -o photo_compressed.imeta --compression deflate
+python -m imeta.cli.main encode photo.jpg -o photo_zstd.imeta --compression zstd
 
 # 3. Verify structural and cryptographic integrity
 python -m imeta.cli.main verify photo.imeta
@@ -75,6 +76,12 @@ python -m imeta.cli.main inspect photo.imeta --json
 
 # 5. Decode container back to original image
 python -m imeta.cli.main decode photo.imeta -o photo_reconstructed.jpg
+
+# 6. Sanitize image metadata (strip all EXIF, XMP, IPTC)
+python -m imeta.cli.main sanitize photo.jpg -o photo_clean.jpg
+
+# 7. Redact GPS coordinates surgically while preserving camera EXIF
+python -m imeta.cli.main sanitize photo.jpg -o photo_no_gps.jpg --gps-only
 ```
 
 ---
@@ -125,10 +132,10 @@ uvicorn imeta.api.server:app --host 127.0.0.1 --port 8000
 ---
 
 ## Metadata Sanitization & Scope Notes
-The `POST /sanitize` endpoint exports a modified copy of an image with specific metadata strips:
+The `POST /sanitize` endpoint and `imeta sanitize` CLI command export a modified copy of an image with specific metadata strips:
 - **Remove all EXIF/XMP/IPTC:** Complete stripping of all metadata segments/chunks.
-- **GPS-only removal:** Surgically zeroes out IFD0's `GPSInfo` tag (0x8825) and its associated GPS sub-IFD while preserving camera properties (Make, Model, etc.).
-- **Scope note on secondary IFD1:** GPS-only redaction targets the primary IFD0 structure and its linked sub-IFDs. In rare cases where hardware duplicates geotags into IFD1 (embedded thumbnail IFD), use **full EXIF removal** (`remove_exif=True`) for absolute forensic stripping.
+- **GPS-only removal:** Surgically zeroes out the `GPSInfo` tag (0x8825) and its associated GPS sub-IFD while preserving camera properties (Make, Model, etc.).
+- **Dual IFD0 & IFD1 traversal:** Both IFD0 (primary image) and IFD1 (thumbnail IFD) are traversed and zero-filled in GPS-only mode. If hardware duplicates geotags into the thumbnail IFD, its GPS pointer and sub-table are scrubbed while keeping the thumbnail intact.
 
 ---
 

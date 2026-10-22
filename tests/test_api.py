@@ -61,6 +61,42 @@ def test_api_encode_and_decode_roundtrip(sample_png_bytes):
     assert decode_res.content == sample_png_bytes
 
 
+def test_api_encode_and_decode_deflate_roundtrip(sample_png_bytes):
+    encode_res = client.post(
+        "/encode",
+        files={"file": ("test.png", sample_png_bytes, "image/png")},
+        data={"compression": "deflate"},
+    )
+    assert encode_res.status_code == 200
+    imeta_data = encode_res.content
+
+    decode_res = client.post(
+        "/decode",
+        files={"file": ("test.imeta", imeta_data, "application/octet-stream")},
+    )
+    assert decode_res.status_code == 200
+    assert decode_res.headers["content-type"] == "image/png"
+    assert decode_res.content == sample_png_bytes
+
+
+def test_api_encode_and_decode_zstd_roundtrip(sample_png_bytes):
+    encode_res = client.post(
+        "/encode",
+        files={"file": ("test.png", sample_png_bytes, "image/png")},
+        data={"compression": "zstd"},
+    )
+    assert encode_res.status_code == 200
+    imeta_data = encode_res.content
+
+    decode_res = client.post(
+        "/decode",
+        files={"file": ("test.imeta", imeta_data, "application/octet-stream")},
+    )
+    assert decode_res.status_code == 200
+    assert decode_res.headers["content-type"] == "image/png"
+    assert decode_res.content == sample_png_bytes
+
+
 def test_api_verify_corrupted_container():
     res = client.post(
         "/verify",

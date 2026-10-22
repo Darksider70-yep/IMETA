@@ -1132,6 +1132,7 @@
             <div class="button-group">
               <button type="button" class="btn-toggle active" id="btn-comp-none" data-comp="none">No compression</button>
               <button type="button" class="btn-toggle" id="btn-comp-deflate" data-comp="deflate">DEFLATE</button>
+              <button type="button" class="btn-toggle" id="btn-comp-zstd" data-comp="zstd">Zstandard</button>
             </div>
           </div>
 
@@ -1145,18 +1146,23 @@
         // Compression buttons
         const btnNone = document.getElementById('btn-comp-none');
         const btnDeflate = document.getElementById('btn-comp-deflate');
+        const btnZstd = document.getElementById('btn-comp-zstd');
         const btnEncode = document.getElementById('btn-encode');
 
-        btnNone.addEventListener('click', () => {
-          selectedCompression = 'none';
-          btnNone.classList.add('active');
-          btnDeflate.classList.remove('active');
-        });
+        const compButtons = [
+          { btn: btnNone, comp: 'none' },
+          { btn: btnDeflate, comp: 'deflate' },
+          { btn: btnZstd, comp: 'zstd' },
+        ];
 
-        btnDeflate.addEventListener('click', () => {
-          selectedCompression = 'deflate';
-          btnDeflate.classList.add('active');
-          btnNone.classList.remove('active');
+        compButtons.forEach(({ btn, comp }) => {
+          if (!btn) return;
+          btn.addEventListener('click', () => {
+            selectedCompression = comp;
+            compButtons.forEach(b => {
+              if (b.btn) b.btn.classList.toggle('active', b.comp === comp);
+            });
+          });
         });
 
         btnEncode.addEventListener('click', executeEncode);
