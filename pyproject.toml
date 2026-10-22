@@ -19,10 +19,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+zstd = [
+    "zstandard>=0.20.0",
+]
 dev = [
     "pytest>=7.0.0",
     "httpx>=0.25.0",
     "pillow>=10.0.0",
+    "zstandard>=0.20.0",
 ]
 
 [project.scripts]

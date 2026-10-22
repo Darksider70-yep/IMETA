@@ -89,13 +89,14 @@ async def encode_image(
     file: UploadFile = File(..., description="Image file to encode (JPEG, PNG, WebP)"),
     compression: str = Form(
         "none",
-        description="Compression algorithm ('none' or 'deflate')",
+        description="Compression algorithm ('none', 'deflate', or 'zstd')",
     ),
 ):
     """Encode an image into a lossless .imeta binary container."""
     data = await _read_upload_file(file)
 
-    comp_id = CompressionID.DEFLATE if compression.lower() == "deflate" else CompressionID.NONE
+    comp_map = {"deflate": CompressionID.DEFLATE, "zstd": CompressionID.ZSTD}
+    comp_id = comp_map.get(compression.lower(), CompressionID.NONE)
 
     try:
         container_bytes = serialize_imeta(data, compression=comp_id)

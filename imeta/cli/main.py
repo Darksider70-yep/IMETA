@@ -6,13 +6,14 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
-from imeta.core.constants import CompressionID, FormatID, FORMAT_NAMES
+from imeta.core.constants import CompressionID, FormatID, FORMAT_NAMES, FORMAT_EXTENSIONS
 from imeta.core.deserializer import decode_file, deserialize_imeta
 from imeta.core.exceptions import IMETAError
 from imeta.core.hashing import compute_file_sha256_hex
-from imeta.core.parser import parse_image_file
+from imeta.core.parser import parse_image_bytes, parse_image_file
 from imeta.core.serializer import encode_file
 from imeta.core.validator import validate_container
+from imeta.sanitize import get_sanitizer
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_encode.add_argument("-o", "--output", help="Path to output .imeta file (default: <image>.imeta)")
     p_encode.add_argument(
         "--compression",
-        choices=["none", "deflate"],
+        choices=["none", "deflate", "zstd"],
         default="none",
         help="Payload compression algorithm (default: none)",
     )
@@ -53,6 +54,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("container", help="Path to .imeta file to verify")
     p_verify.add_argument("--json", action="store_true", help="Output verification report in JSON")
 
+    # sanitize
+    p_sanitize = subparsers.add_parser(
+        "sanitize",
+        help="Export a sanitized copy of an image with selected metadata removed",
+    )
+    p_sanitize.add_argument("file", help="Path to image or .imeta container file")
+    p_sanitize.add_argument("-o", "--output", help="Path to output sanitized image file")
+    sanitize_group = p_sanitize.add_mutually_exclusive_group()
+    sanitize_group.add_argument(
+        "--remove-exif",
+        action="store_true",
+        help="Remove all EXIF metadata",
+    )
+    sanitize_group.add_argument(
+        "--remove-gps",
+        action="store_true",
+        help="Remove GPS tags only, preserving other EXIF data",
+    )
+    p_sanitize.add_argument(
+        "--remove-xmp",
+        action="store_true",
+        help="Remove XMP metadata",
+    )
+    p_sanitize.add_argument(
+        "--remove-iptc",
+        action="store_true",
+        help="Remove IPTC metadata",
+    )
+
     return parser
 
 
@@ -63,7 +93,13 @@ def cmd_encode(args: argparse.Namespace) -> int:
         return 1
 
     output_path = Path(args.output) if args.output else input_path.with_suffix(input_path.suffix + ".imeta")
-    comp_id = CompressionID.DEFLATE if args.compression == "deflate" else CompressionID.NONE
+
+    comp_map = {
+        "none": CompressionID.NONE,
+        "deflate": CompressionID.DEFLATE,
+        "zstd": CompressionID.ZSTD,
+    }
+    comp_id = comp_map.get(args.compression, CompressionID.NONE)
 
     try:
         orig_sha = compute_file_sha256_hex(input_path)
@@ -195,6 +231,77 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_sanitize(args: argparse.Namespace) -> int:
+    """Sanitize metadata from an image or .imeta container and write the result to disk."""
+    path = Path(args.file)
+    if not path.is_file():
+        print(f"Error: File not found: {args.file}", file=sys.stderr)
+        return 1
+
+    remove_exif = args.remove_exif
+    remove_gps_only = args.remove_gps
+    remove_xmp = args.remove_xmp
+    remove_iptc = args.remove_iptc
+
+    if not (remove_exif or remove_gps_only or remove_xmp or remove_iptc):
+        print(
+            "Error: Select at least one metadata category to remove "
+            "(--remove-exif, --remove-gps, --remove-xmp, --remove-iptc).",
+            file=sys.stderr,
+        )
+        return 1
+
+    data = path.read_bytes()
+
+    try:
+        # Detect container vs raw image
+        if data.startswith(b"IMTA"):
+            container = deserialize_imeta(data, verify_integrity=True)
+            image_bytes = container.image_bytes
+            format_id = container.format_id
+            ext = container.metadata.get("extension") or FORMAT_EXTENSIONS.get(format_id, ".bin")
+        else:
+            parse_result = parse_image_bytes(data)
+            image_bytes = data
+            format_id = parse_result.format_id
+            ext = parse_result.extension
+
+        sanitizer = get_sanitizer(format_id)
+        result = sanitizer.sanitize(
+            image_bytes,
+            remove_exif=remove_exif,
+            remove_gps_only=remove_gps_only,
+            remove_xmp=remove_xmp,
+            remove_iptc=remove_iptc,
+        )
+
+        # Determine output path
+        if args.output:
+            out_path = Path(args.output)
+        else:
+            stem = path.stem
+            if stem.endswith(".imeta"):
+                stem = stem[:-6]
+            out_path = path.parent / f"{stem}_sanitized{ext}"
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(result.image_bytes)
+
+        print(f"Sanitized '{path}' -> '{out_path}'")
+        print(f"Removed: {', '.join(result.removed) if result.removed else '(none)'}")
+        if result.gps_only_downgraded:
+            print("Warning: GPS-only removal fell back to full EXIF removal due to malformed structure.")
+        print(f"New SHA-256: {result.new_sha256}")
+        return 0
+
+    except IMETAError as e:
+        print(f"Sanitization error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        return 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -211,8 +318,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_inspect(args)
     elif args.command == "verify":
         return cmd_verify(args)
+    elif args.command == "sanitize":
+        return cmd_sanitize(args)
     return 1
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
